@@ -2,7 +2,7 @@
 
 ## Problema que o projeto resolve
 
-Este projeto tem como objetivo reduzir perdas de safras em estufas agrícolas causadas por variações de temperatura e umidade. O sistema realiza o monitoramento das condições do ambiente e pode acionar dispositivos automaticamente para manter condições adequadas para o cultivo.
+Este projeto apresenta um protótipo de sistema IoT para monitoramento e controle de variáveis ambientais em estufas agrícolas. O sistema realiza a leitura de parâmetros como temperatura e umidade, possibilitando o acompanhamento das condições do ambiente e o acionamento automatizado de dispositivos, visando demonstrar uma solução para auxiliar no controle das condições de cultivo.
 
 ## Componentes utilizados até o momento
 
