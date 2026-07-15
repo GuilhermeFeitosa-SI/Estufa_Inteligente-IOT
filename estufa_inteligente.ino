@@ -1,237 +1,338 @@
 #include <DHT.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
-// WiFi
+// Configurações do Wi-Fi
 const char* ssid = "Wokwi-GUEST";
-//const char* password = "SUA_SENHA";
+const char* password = "";
 
-// MQTT
-const char* broker_mqtt = "broker.hivemq.com";
-const int porta_mqtt = 1883;
+// =========================
+// DHT11
+// =========================
+#define DHTPIN 7 
+#define DHTTYPE DHT11 
+DHT dht(DHTPIN, DHTTYPE);
 
-// Troque pelo nome do grupo/projeto
-const char* topico_base = "ifma/estufa/inteligente";
+// =========================
+// PINOS
+// =========================
+#define SENSOR_SOLO 33
+#define RELE_BOMBA 26
+#define RELE_COOLER 21 
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+// =========================
+// LIMITES AUTOMÁTICOS
+// =========================
+const float TEMP_LIGA = 22.0;
+const float TEMP_DESLIGA = 20.0;
 
-unsigned long lastMsg = 0;
+// =========================
+// ESTADOS DO HARDWARE
+// =========================
+bool coolerLigado = false;
+bool bombaLigada = false;
 
-void setup_wifi() {
+// Comandos vindos da Interface Web
+bool comandoFan = false;
+bool comandoBomba = false;
 
-  WiFi.begin(ssid,"");
+// =========================
+// VARIÁVEIS DE LEITURA
+// =========================
+int leituraSolo = 0;
+int umidadeSolo = 0;
+float temperatura = 0.0;
+
+
+void conectarWiFi() {
+  Serial.print("Conectando WiFi");
+
+  WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.println("\nWiFi conectado!");
+  Serial.println("\nWiFi conectado");
 }
 
-void reconnect() {
 
-  while (!client.connected()) {
+// Envia dados para a Interface Web
+void enviarDadosWeb() {
 
-    String clientId =
-      "ESP32Estufa-" +
-      String(random(0xffff), HEX);
+  if (WiFi.status() != WL_CONNECTED) return;
 
-    if (client.connect(clientId.c_str())) {
+  HTTPClient http;
 
-      Serial.println("MQTT conectado");
+  String url = "http://localhost:3000/data";
 
-    } else {
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
 
-      delay(5000);
+
+  JsonDocument doc;
+
+  JsonArray arr = doc.to<JsonArray>();
+
+
+  JsonObject temp = arr.add<JsonObject>();
+  temp["variable"] = "temperatura";
+  temp["value"] = temperatura;
+
+
+  JsonObject solo = arr.add<JsonObject>();
+  solo["variable"] = "umidade_solo";
+  solo["value"] = umidadeSolo;
+
+
+  JsonObject cooler = arr.add<JsonObject>();
+  cooler["variable"] = "cooler";
+  cooler["value"] = coolerLigado;
+
+
+  JsonObject bomba = arr.add<JsonObject>();
+  bomba["variable"] = "bomba";
+  bomba["value"] = bombaLigada;
+
+
+
+  String payload;
+
+  serializeJson(doc, payload);
+
+  int httpCode = http.POST(payload);
+
+  Serial.print("HTTP POST Code: ");
+  Serial.println(httpCode);
+
+
+  http.end();
+}
+
+
+// Recebe comandos da interface Web
+void lerComandosWeb() {
+
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = "http://localhost:3000/data";
+  http.begin(url);
+
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+
+    String resposta = http.getString();
+
+    JsonDocument doc;
+
+    deserializeJson(doc, resposta);
+
+    
+    for (JsonObject item : doc.as<JsonArray>()) {
+      String variavel = item["variable"].as<String>();
+      String valor = item["value"].as<String>();
+
+      if (variavel == "fan_manual") {
+        comandoFan = (valor == "true");
+
+      }
+
+      if (variavel == "bomba_manual") {
+        comandoBomba = (valor == "true");
+
+      }
     }
   }
+
+
+  http.end();
 }
 
-// =========================
-// DHT11
-// =========================
+float MedirTemperatura() {
 
-#define DHTPIN 4
-#define DHTTYPE DHT11
-DHT dht(DHTPIN, DHTTYPE);
+  float t = dht.readTemperature();
 
-// =========================
-// PINOS
-// =========================
 
-#define SENSOR_SOLO 34
+  if (isnan(t)) {
 
-#define RELE_BOMBA 26
-#define RELE_COOLER 21
+    Serial.println("Erro ao ler DHT11");
 
-// =========================
-// LIMITES
-// =========================
+    return temperatura;
 
-const float TEMP_LIGA = 30.0;
-const float TEMP_DESLIGA = 28.0;
+  }
 
-const int SOLO_LIGA = 1400;
-const int SOLO_DESLIGA = 2400;
 
-// =========================
-// ESTADOS
-// =========================
+  temperatura = t;
 
-bool coolerLigado = false;
-bool bombaLigada = false;
+  return temperatura;
+}
+
+int MedirUmidadeSolo(int op) {
+
+  leituraSolo = analogRead(SENSOR_SOLO);
+  umidadeSolo = map(leituraSolo, 4095, 1500, 0, 100);
+  umidadeSolo = constrain(umidadeSolo, 0, 100);
+
+  if(op == 0)
+    return leituraSolo;
+  return umidadeSolo;
+}
+
+void Fan(int op) {
+
+  if(op == 1) {
+
+    digitalWrite(RELE_COOLER, LOW);
+
+    coolerLigado = true;
+
+  } 
+
+  else {
+
+    digitalWrite(RELE_COOLER, HIGH);
+
+    coolerLigado = false;
+
+  }  
+
+}
+
+
+void Bomba(int op) {
+
+  if(op == 1) {
+    digitalWrite(RELE_BOMBA, LOW);
+    bombaLigada = true;
+
+  } 
+
+  else {
+    digitalWrite(RELE_BOMBA, HIGH);
+    bombaLigada = false;
+
+  }
+
+}
 
 void setup() {
 
   Serial.begin(115200);
-
   dht.begin();
-
-  setup_wifi();
-
-  client.setServer(
-    broker_mqtt,
-    porta_mqtt
-  );
+  conectarWiFi();
 
   pinMode(RELE_BOMBA, OUTPUT);
   pinMode(RELE_COOLER, OUTPUT);
-  pinMode(10, OUTPUT);
 
-  // Relés desligados
+
+
+  // Relés iniciam desligados
+
   digitalWrite(RELE_BOMBA, HIGH);
   digitalWrite(RELE_COOLER, HIGH);
-  digitalWrite(10, HIGH);
 
   Serial.println("Sistema da estufa iniciado");
+
 }
+
 
 void loop() {
 
-  if (!client.connected())
-  reconnect();
 
-  client.loop();
+  temperatura = MedirTemperatura();
+  leituraSolo = MedirUmidadeSolo(0);
+  umidadeSolo = MedirUmidadeSolo(1);
 
-  // =========================
-  // TEMPERATURA
-  // =========================
+  // ==========================================
+  // LÓGICA DO COOLER
+  // ==========================================
 
-  float temperatura = dht.readTemperature();
+  if (comandoFan) {
 
-  if (isnan(temperatura)) {
-    Serial.println("Erro ao ler DHT11");
-    delay(2000);
-    return;
+    Fan(1);
+
+  } 
+
+  else {
+    if (temperatura >= TEMP_LIGA) {
+
+     Fan(1);
+
+    } 
+
+    else if (temperatura <= TEMP_DESLIGA) {
+
+      Fan(0);
+
+    }
+
   }
 
-  // =========================
-  // UMIDADE SOLO
-  // =========================
+  // ==========================================
+  // LÓGICA DA BOMBA
+  // ==========================================
 
- int leituraSolo = 4095;
+  if (comandoBomba) {
 
-  // Ajuste conforme a calibração
-  int umidadeSolo = map(
-    leituraSolo,
-    4095,   // seco
-    1500,   // molhado
-    0,
-    100
-  );
+    Bomba(1);
 
-  umidadeSolo = constrain(umidadeSolo, 0, 100);
+  } 
 
-  // =========================
-  // LUMINOSIDADE
-  // =========================
+  else {
 
-  //int luminosidade = digitalRead(SENSOR_SOLO);
-  //int luminosidade = 4095 - luminosidadeBruta;
 
-  // =========================
-  // CONTROLE COOLER
-  // =========================
- 
+    if (leituraSolo >= 3600) {
 
-  if (!coolerLigado && temperatura >= TEMP_LIGA) {
 
-    digitalWrite(RELE_COOLER, LOW);
-    coolerLigado = true;
+      Bomba(1);
+
+      delay(1000);
+
+      Bomba(0);
+
+
+    } 
+
+    else if(leituraSolo <= 1000) {
+
+
+      Bomba(0);
+
+    }
+
   }
 
-  if (coolerLigado && temperatura <= TEMP_DESLIGA) {
-
-    digitalWrite(RELE_COOLER, HIGH);
-    coolerLigado = false;
-  }
-
-  // =========================
-  // CONTROLE BOMBA
-  // =========================
-
-  if (!bombaLigada && umidadeSolo <= 30) {
-
-    digitalWrite(RELE_BOMBA, LOW);
-    bombaLigada = true;
-}
-
-if (bombaLigada && umidadeSolo >= 50) {
-
-    digitalWrite(RELE_BOMBA, HIGH);
-    bombaLigada = false;
-}
-
-  // =========================
-  // MONITOR SERIAL
-  // =========================
+  // Monitor Serial
 
   Serial.println("========================");
 
-  Serial.print("Temperatura: ");
-  Serial.print(temperatura);
-  Serial.println(" C");
+  Serial.printf("Temp: %.1f °C | Solo: %d (%d%%)\n",
+                temperatura,
+                leituraSolo,
+                umidadeSolo);
 
-  Serial.print("Umidade do Solo: ");
-  Serial.print(umidadeSolo);
-  Serial.println("%");
 
-  Serial.print("Cooler: ");
-  Serial.println(coolerLigado ? "LIGADO" : "DESLIGADO");
+  Serial.printf("Cooler: %s (Web: %s)\n",
+                coolerLigado ? "LIGADO" : "DESLIGADO",
+                comandoFan ? "SIM" : "NÃO");
 
-  Serial.print("Bomba: ");
-  Serial.println(bombaLigada ? "LIGADA" : "DESLIGADA");
 
-  unsigned long now = millis();
+  Serial.printf("Bomba: %s (Web: %s)\n",
+                bombaLigada ? "LIGADA" : "DESLIGADA",
+                comandoBomba ? "SIM" : "NÃO");
 
-  if (now - lastMsg > 5000) {
 
-    lastMsg = now;
 
-    client.publish(
-      (String(topico_base) + "/temperatura").c_str(),
-      String(temperatura).c_str()
-    );
+  enviarDadosWeb();
 
-    client.publish(
-      (String(topico_base) + "/umidadeSolo").c_str(),
-      String(umidadeSolo).c_str()
-    );
+  delay(1000);
 
-    client.publish(
-      (String(topico_base) + "/bomba").c_str(),
-      bombaLigada ? "ON" : "OFF"
-    );
+  lerComandosWeb();
 
-    client.publish(
-      (String(topico_base) + "/cooler").c_str(),
-      coolerLigado ? "ON" : "OFF"
-    );
+  delay(1000);
 
-    Serial.println("Dados enviados via MQTT");
-  }
-
-  delay(2000);
 }
