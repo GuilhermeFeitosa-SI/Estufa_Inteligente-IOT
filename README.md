@@ -27,3 +27,11 @@ O sensor DHT11 realiza a leitura da temperatura e da umidade do ambiente. Os dad
 
 As informações também são enviadas por meio do protocolo MQTT, permitindo monitoramento remoto dos dados coletados.
 
+## Como executar o projeto
+
+Antes de iniciar, é necessário ter o **Node.js** instalado na máquina.
+
+Após instalar o Node.js, abra o terminal na pasta do projeto e execute o comando:
+
+```bash
+node server.js
